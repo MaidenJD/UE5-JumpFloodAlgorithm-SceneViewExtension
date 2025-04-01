@@ -1,0 +1,11 @@
+#include "/Engine/Private/Common.ush"
+
+Texture2D<float4> InSource;
+SamplerState InSourceSampler;
+float2 InDestinationResolution;
+
+void MainPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	float2 UV = SVPos.xy / InDestinationResolution;
+	OutColor = InSource.Sample(InSourceSampler, UV);
+}

@@ -1,0 +1,96 @@
+#include "/Engine/Private/Common.ush"
+
+// These contain various functions and structs that may be useful - not a complete list
+// #include "/Engine/Generated/GeneratedUniformBuffers.ush" 
+// #include "/Engine/Private/ColorUtils.ush"
+// #include "/Engine/Private/Common.ush"
+// #include "/Engine/Private/DeferredShadingCommon.ush"
+// #include "/Engine/Private/DistanceField/GlobalDistanceFieldShared.ush"
+// #include "/Engine/Private/Random.ush"
+// #include "/Engine/Private/SceneData.ush"
+// #include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/SceneTexturesCommon.ush"
+// #include "/Engine/Private/SceneTextureParameters.ush"
+
+float2 TextureSize;
+float2 TextureSizeInverse;
+
+Texture2D<float4> JFATexture;
+SamplerState JFASampler;
+
+float StepSize;
+
+float2 PointSampleUV(float2 UV)
+{
+	return (floor(UV * TextureSize) + 0.5) * TextureSizeInverse;
+}
+
+float SquareDistance(float2 A, float2 B)
+{
+	return Square(B.x-A.x) + Square(B.y-A.y);
+}
+
+float PackTwoNormalizedFloats(float A, float B)
+{
+	int precision = 4096;
+	int precisionminusone = precision - 1;
+
+	A = floor(A * precisionminusone);
+	B = floor(B * precisionminusone);
+
+	return (A * precision) + B;
+}
+
+float2 UnpackTwoNormalizedFloats(float Packed)
+{
+	int precision = 4096;
+	float2 output = 0;
+
+	output.y = fmod(Packed , precision);
+	output.x = floor(Packed / precision);
+	output /= (precision - 1);
+	return output;
+}
+
+float4 MainPS(float4 SvPosition : SV_POSITION) : SV_Target0
+{
+	const float2 PixelPosition = SvPosition.xy;
+	const float2 UV = PixelPosition * TextureSizeInverse;
+
+	float2 PointUV = PointSampleUV(UV);
+	float4 Initial = JFATexture.Sample(JFASampler, PointUV);
+
+	float4 Color = Initial;
+	float MaxDist = 1000000000000.0;
+	if (Initial.r > 0)
+	{
+		MaxDist = SquareDistance(PointUV, UnpackTwoNormalizedFloats(Initial.r));
+	}
+
+	for (int X = -1; X <= 1; X += 1)
+	{
+		for (int Y = -1; Y <= 1; Y += 1)
+		{
+			if (X == 0 && Y == 0) continue;
+
+			float2 Offset = float2(X, Y) * StepSize;
+
+			float4 Sample = JFATexture.Sample(JFASampler, PointSampleUV(UV + Offset));
+			if (Sample.r > 0)
+			{
+				float2 UnpackedSampleUV = UnpackTwoNormalizedFloats(Sample.r);
+				float DistanceSquared = SquareDistance(PointUV, UnpackedSampleUV);
+				if (DistanceSquared < MaxDist)
+				{
+					Color = Sample;
+
+					float2 Delta = UnpackedSampleUV - PointUV;
+					Color.b = sqrt(DistanceSquared);
+					MaxDist = DistanceSquared;
+				}
+			}
+		}
+	}
+
+	return Color;
+}
