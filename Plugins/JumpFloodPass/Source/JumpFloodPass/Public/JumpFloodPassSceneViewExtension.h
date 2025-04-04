@@ -4,12 +4,12 @@
 
 class UTextureRenderTarget2D;
 
-class FJFA_SceneViewExtension final : public FSceneViewExtensionBase
+class FJumpFloodPassSceneViewExtension final : public FSceneViewExtensionBase
 {
 
 public:
 
-	FJFA_SceneViewExtension(const FAutoRegister &AutoRegister, UTextureRenderTarget2D* RenderTarget)
+	FJumpFloodPassSceneViewExtension(const FAutoRegister &AutoRegister, UTextureRenderTarget2D* RenderTarget)
 		: FSceneViewExtensionBase(AutoRegister)
 		, RenderTarget(RenderTarget)
 	{

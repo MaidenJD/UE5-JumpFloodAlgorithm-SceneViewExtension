@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
-using System.IO;
 
 public class JumpFloodAlgorithm : ModuleRules
 {
@@ -9,7 +8,7 @@ public class JumpFloodAlgorithm : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "Renderer", "RenderCore", "RHI" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
@@ -20,11 +19,5 @@ public class JumpFloodAlgorithm : ModuleRules
 		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
 
 		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
-
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				Path.Combine(GetModuleDirectory("Renderer"), "Private"),
-			}
-		);
 	}
 }

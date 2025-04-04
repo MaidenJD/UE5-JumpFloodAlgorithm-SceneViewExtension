@@ -6,19 +6,10 @@
 #include "Engine/GameInstance.h"
 #include "JFA_GameInstance.generated.h"
 
-class FJFA_SceneViewExtension;
+class FJumpFloodPassSceneViewExtension;
 
 UCLASS()
 class JUMPFLOODALGORITHM_API UJFA_GameInstance final : public UGameInstance
 {
 	GENERATED_BODY()
-
-public:
-
-	void Init() override;
-
-private:
-
-	TSharedPtr<FJFA_SceneViewExtension, ESPMode::ThreadSafe> SceneViewExtension;
-
 };

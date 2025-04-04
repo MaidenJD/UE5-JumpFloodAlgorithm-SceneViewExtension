@@ -5,22 +5,27 @@
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "JFA_DeveloperSettings.generated.h"
+#include "JumpFloodPassSettings.generated.h"
 
 
 /**
  * 
  */
-UCLASS(Config = Game, DefaultConfig, DisplayName = "Jump Flood Algorithm")
-class JUMPFLOODALGORITHM_API UJFA_DeveloperSettings : public UDeveloperSettings
+UCLASS(Config = JumpFloodPass, DefaultConfig, DisplayName = "Jump Flood Pass")
+class JUMPFLOODPASS_API UJumpFloodPassSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
 
 	static bool IsEnabled() { return GetDefault<ThisClass>()->bEnabled; }
-
 	static TSoftObjectPtr<UTextureRenderTarget2D> GetRenderTarget() { return GetDefault<ThisClass>()->RenderTarget; }
+
+	//~ Begin UDeveloperSettings Interface
+	virtual FName GetContainerName() const override final { return FName("Project"); }
+	virtual FName GetCategoryName() const override final { return FName("Plugins"); }
+	virtual FName GetSectionName() const override final { return FName("JumpFloodPass"); }
+	//~ End UDeveloperSettings Interface
 
 private:
 

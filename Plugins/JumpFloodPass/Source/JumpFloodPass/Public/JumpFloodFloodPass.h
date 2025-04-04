@@ -6,7 +6,7 @@
 #include "ShaderParameterStruct.h"
 #include "SceneTextureParameters.h"
 
-BEGIN_SHADER_PARAMETER_STRUCT(FJFA_FloodPassParams,)
+BEGIN_SHADER_PARAMETER_STRUCT(FJumpFloodFloodPassParams,)
 	SHADER_PARAMETER(FVector2f, TextureSize)
 	SHADER_PARAMETER(FVector2f, TextureSizeInverse)
 	SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
@@ -17,9 +17,9 @@ BEGIN_SHADER_PARAMETER_STRUCT(FJFA_FloodPassParams,)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
-class FJFA_FloodPassPS : public FGlobalShader
+class FJumpFloodFloodPassPS : public FGlobalShader
 {
-	DECLARE_EXPORTED_SHADER_TYPE(FJFA_FloodPassPS, Global, );
-	using FParameters = FJFA_FloodPassParams;
-	SHADER_USE_PARAMETER_STRUCT(FJFA_FloodPassPS, FGlobalShader);
+	DECLARE_EXPORTED_SHADER_TYPE(FJumpFloodFloodPassPS, Global, );
+	using FParameters = FJumpFloodFloodPassParams;
+	SHADER_USE_PARAMETER_STRUCT(FJumpFloodFloodPassPS, FGlobalShader);
 };

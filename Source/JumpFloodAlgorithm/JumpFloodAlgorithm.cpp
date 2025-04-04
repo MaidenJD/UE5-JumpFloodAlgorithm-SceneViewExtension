@@ -6,16 +6,6 @@
 class FJumpFloodAlgorithmGameModule final : public IModuleInterface
 {
 
-public:
-
-	void StartupModule() override
-	{
-		const FString ProjectShaderDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Shaders"));
-		if(!AllShaderSourceDirectoryMappings().Contains(TEXT("/JFA_Shaders")))
-		{
-			AddShaderSourceDirectoryMapping(TEXT("/JFA_Shaders"), ProjectShaderDir);
-		}
-	}
 };
 
 
