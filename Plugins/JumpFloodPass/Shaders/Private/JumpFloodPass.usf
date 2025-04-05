@@ -85,14 +85,15 @@ float4 SeedPS(float4 SvPosition : SV_POSITION) : SV_Target0 {
 	float4 Color = float4(0.0, 0.0, 0.0, 0.0);
 
 	const float2 PixelPosition = SvPosition.xy;
-	const float2 UV = PointSampleUV(PixelPosition * TextureSizeInverse);
+	const float2 UV = PixelPosition * TextureSizeInverse;
 	const float2 ScreenPosition = UV * ViewportSize;
 
-	Color = float4(0.0, 0.0, 0.0, 0.0);
+	Color = float4(0.0, 0.0, 0.0, 1.0);
 
 	int StencilValue = CalcSceneCustomStencil(ScreenPosition);
 	if (StencilValue > 0)
 	{
+		Color.a = -1.0;
 		if (SobelEdgeDetection(ScreenPosition) > 0)
 		{
 			float PackedUV = PackTwoNormalizedFloats(UV.x, UV.y);
@@ -137,6 +138,7 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 
 					float2 Delta = UnpackedSampleUV - PointUV;
 					Color.b = sqrt(DistanceSquared);
+					Color.a = Initial.a;
 					MaxDist = DistanceSquared;
 				}
 			}
@@ -149,5 +151,9 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 void CopyPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
 {
 	float2 UV = SVPos.xy / CopyDestinationResolution;
-	OutColor = SourceTexture.Sample(SourceSampler, UV);
+	float4 Sample = SourceTexture.Sample(SourceSampler, UV);
+
+	OutColor.rg = Sample.rg;
+	OutColor.b = Sample.b * Sample.a;
+	OutColor.a = 1.0;
 }
