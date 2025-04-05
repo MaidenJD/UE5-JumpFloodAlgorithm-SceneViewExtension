@@ -10,22 +10,13 @@
 
 void FJumpFloodPassModule::StartupModule()
 {
-	CreateJumpFloodPassSettings();
+	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("JumpFloodPass"))->GetBaseDir(), TEXT("Shaders"));
+	AddShaderSourceDirectoryMapping(TEXT("/Plugin/JumpFloodPass"), PluginShaderDir);
 }
 
 void FJumpFloodPassModule::ShutdownModule()
 {
 
-}
-
-void FJumpFloodPassModule::CreateJumpFloodPassSettings()
-{
-	// JumpFloodPassSettings = NewObject<UJumpFloodPassSettings>(GetTransientPackage(), UJumpFloodPassSettings::StaticClass());
-	// check(JumpFloodPassSettings);
-	// JumpFloodPassSettings->AddToRoot();
-
-	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("JumpFloodPass"))->GetBaseDir(), TEXT("Shaders"));
-	AddShaderSourceDirectoryMapping(TEXT("/Plugin/JumpFloodPass"), PluginShaderDir);
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -18,15 +18,15 @@
 #include "SceneView.h"
 #include "ScreenPass.h"
 
-TAutoConsoleVariable<float> CVarJFARenderScale(
-	TEXT("r.JFA.RenderScale"),
+TAutoConsoleVariable<float> CVarJumpFloodRenderScale(
+	TEXT("r.JumpFloodPass.RenderScale"),
 	1.0f,
-	TEXT("Value to scale Jump Flooding render textures by. 1.0 scale is used when value is 0\n"),
+	TEXT("Value to scale Jump Flooding render textures by. 1.0 scale is used when value is <= 0\n"),
 	ECVF_RenderThreadSafe);
 
 bool FJumpFloodPassSceneViewExtension::IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const
 {
-	return UJumpFloodPassSettings::IsEnabled() && RenderTarget;
+	return UJumpFloodPassSettings::IsEnabled() && IsValid(RenderTarget);
 }
 
 void FJumpFloodPassSceneViewExtension::SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView)
@@ -62,19 +62,19 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 		return;
 	}
 
-	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataFloat(TEXT("r.JFA.RenderScale"));
+	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataFloat(TEXT("r.JumpFloodPass.RenderScale"));
 	float RenderScale = CVar->GetValueOnRenderThread() > 0.0f ? CVar->GetValueOnRenderThread() : 1.0f;
 
 	const FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
-	RDG_EVENT_SCOPE(GraphBuilder, "JFA");
+	RDG_EVENT_SCOPE(GraphBuilder, "Jump Flood");
 
 	if (bShouldRecreatePooledRenderTarget)
 	{
 		CreatePooledRenderTarget_RenderThread();
 	}
 
-	FRDGTextureRef RenderTargetTexture = GraphBuilder.RegisterExternalTexture(PooledRenderTarget, TEXT("JFA Render Target"));
+	FRDGTextureRef RenderTargetTexture = GraphBuilder.RegisterExternalTexture(PooledRenderTarget, TEXT("Jump Flood Render Target"));
 	const FIntRect RenderViewport = FIntRect(0, 0, RenderTargetTexture->Desc.Extent.X, RenderTargetTexture->Desc.Extent.Y);
 
 	FRDGTextureDesc IntermediateTargetDesc = RenderTargetTexture->Desc;
@@ -85,9 +85,9 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 
 	const FIntRect IntermediateViewport = FIntRect(0, 0, IntermediateTargetDesc.Extent.X, IntermediateTargetDesc.Extent.Y);
 
-	FRDGTextureRef JFATextures[] = {
-		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("JFA Target A")),
-		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("JFA Target B")),
+	FRDGTextureRef JumpFloodTextures[] = {
+		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("Jump Flood Intermediate Target A")),
+		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("Jump Flood Intermediate Target B")),
 	};
 
 	int32 ReadIndex  = 0;
@@ -96,17 +96,17 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	//  Init Pass
 	{
 		FJumpFloodSeedPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodSeedPassPS::FParameters>();
-		Parameters->TextureSize = JFATextures[WriteIndex]->Desc.Extent;
+		Parameters->TextureSize = JumpFloodTextures[WriteIndex]->Desc.Extent;
 		Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
 		Parameters->ViewportSize = RenderViewport.Size();
 		Parameters->View = InView.ViewUniformBuffer;
 		Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), InView.GetFeatureLevel(), ESceneTextureSetupMode::All);
 
 		// We're going to also clear the render target
-		Parameters->RenderTargets[0] = FRenderTargetBinding(JFATextures[WriteIndex], ERenderTargetLoadAction::EClear);
+		Parameters->RenderTargets[0] = FRenderTargetBinding(JumpFloodTextures[WriteIndex], ERenderTargetLoadAction::EClear);
 
 		TShaderMapRef<FJumpFloodSeedPassPS> PixelShader(GlobalShaderMap);
-		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("JFA: Init")), PixelShader, Parameters, IntermediateViewport);
+		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("Jump Flood: Seed")), PixelShader, Parameters, IntermediateViewport);
 	}
 
 	//  Flood Passes
@@ -121,8 +121,8 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 			GlobalShaderMap,
 			ViewInfo,
 			IntermediateViewport,
-			JFATextures[ReadIndex],
-			JFATextures[WriteIndex],
+			JumpFloodTextures[ReadIndex],
+			JumpFloodTextures[WriteIndex],
 			0,
 			LargestSideInverse);
 			
@@ -135,8 +135,8 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 				GlobalShaderMap,
 				ViewInfo,
 				IntermediateViewport,
-				JFATextures[ReadIndex],
-				JFATextures[WriteIndex],
+				JumpFloodTextures[ReadIndex],
+				JumpFloodTextures[WriteIndex],
 				FloodExponent,
 				LargestSideInverse);
 		}
@@ -145,14 +145,14 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	//  Final stretched copy pass
 	{
 		FJumpFloodCopyPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodCopyPassPS::FParameters>();
-		Parameters->InSource = JFATextures[WriteIndex];
+		Parameters->InSource = JumpFloodTextures[WriteIndex];
 		Parameters->InSourceSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 		Parameters->InDestinationResolution = RenderViewport.Size();
 
 		Parameters->RenderTargets[0] = FRenderTargetBinding(RenderTargetTexture, ERenderTargetLoadAction::EClear);
 
 		TShaderMapRef<FJumpFloodCopyPassPS> PixelShader(GlobalShaderMap);
-		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("JFA: Final Copy")), PixelShader, Parameters, RenderViewport);
+		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("Jump Flood: Copy")), PixelShader, Parameters, RenderViewport);
 	}
 }
 
@@ -171,14 +171,14 @@ void FJumpFloodPassSceneViewExtension::AddFloodPass_RenderThread(
 	Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
 	Parameters->View = ViewInfo.ViewUniformBuffer;
 	Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), ViewInfo.GetFeatureLevel(), ESceneTextureSetupMode::All);
-	Parameters->JFATexture = ReadTexture;
-	Parameters->JFASampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+	Parameters->JumpFloodTexture = ReadTexture;
+	Parameters->JumpFloodSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 	Parameters->StepSize = ((float) (1 << FloodExponent)) * ExponentToUVScaler;
 
 	Parameters->RenderTargets[0] = FRenderTargetBinding(WriteTexture, ERenderTargetLoadAction::ELoad);
 
 	TShaderMapRef<FJumpFloodFloodPassPS> PixelShader(GlobalShaderMap);
-	FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("JFA: Flood %d"), (1 << FloodExponent)), PixelShader, Parameters, IntermediateViewport);
+	FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("Jump Flood: Flood %d"), (1 << FloodExponent)), PixelShader, Parameters, IntermediateViewport);
 }
 
 void FJumpFloodPassSceneViewExtension::CreatePooledRenderTarget_RenderThread()
