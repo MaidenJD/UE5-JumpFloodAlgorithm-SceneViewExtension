@@ -1,0 +1,153 @@
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/SceneTexturesCommon.ush"
+#include "/Engine/Private/SceneTextureParameters.ush"
+
+float2 ViewportSize;
+
+float2 TextureSize;
+float2 TextureSizeInverse;
+
+Texture2D<float4> SourceTexture;
+SamplerState SourceSampler;
+
+float FloodStepSize;
+
+float2 CopyDestinationResolution;
+
+float2 PointSampleUV(float2 UV)
+{
+	return (floor(UV * TextureSize) + 0.5) * TextureSizeInverse;
+}
+
+float PackTwoNormalizedFloats(float A, float B)
+{
+	int Precision = 4096;
+	int PrecisionMinusOne = Precision - 1;
+
+	A = floor(A * PrecisionMinusOne);
+	B = floor(B * PrecisionMinusOne);
+
+	return (A * Precision) + B;
+}
+
+float2 UnpackTwoNormalizedFloats(float Packed)
+{
+	int Precision = 4096;
+	float2 Output = 0;
+
+	Output.y = fmod(Packed , Precision);
+	Output.x = floor(Packed / Precision);
+	Output /= (Precision - 1);
+	return Output;
+}
+
+float SobelEdgeDetection(float2 ScreenPosition)
+{
+	float KernelX[3][3] =
+	{
+		{ -1,  0,  1 },
+		{ -2,  0,  2 },
+		{ -1,  0,  1 }
+	};
+
+	float KernelY[3][3] =
+	{
+		{ -1, -2, -1 },
+		{  0,  0,  0 },
+		{  1,  2,  1 }
+	};
+
+	float Gx = 0.0;
+	float Gy = 0.0;
+
+	// Sample 3x3 neighborhood
+	for (int i = -1; i <= 1; i++)
+	{
+		for (int j = -1; j <= 1; j++)
+		{
+			float2 OffsetScreenPosition = ScreenPosition + float2(i, j);
+			float Stencil = CalcSceneCustomStencil(OffsetScreenPosition);
+
+			Gx += Stencil * KernelX[i + 1][j + 1];
+			Gy += Stencil * KernelY[i + 1][j + 1];
+		}
+	}
+
+	return (Gx * Gx + Gy * Gy);
+}
+
+float SquareDistance(float2 A, float2 B)
+{
+	return Square(B.x-A.x) + Square(B.y-A.y);
+}
+
+float4 SeedPS(float4 SvPosition : SV_POSITION) : SV_Target0 {
+	float4 Color = float4(0.0, 0.0, 0.0, 0.0);
+
+	const float2 PixelPosition = SvPosition.xy;
+	const float2 UV = PointSampleUV(PixelPosition * TextureSizeInverse);
+	const float2 ScreenPosition = UV * ViewportSize;
+
+	Color = float4(0.0, 0.0, 0.0, 0.0);
+
+	int StencilValue = CalcSceneCustomStencil(ScreenPosition);
+	if (StencilValue > 0)
+	{
+		if (SobelEdgeDetection(ScreenPosition) > 0)
+		{
+			float PackedUV = PackTwoNormalizedFloats(UV.x, UV.y);
+			Color = float4(PackedUV, StencilValue, 0.0, 1.0);
+		}
+	}
+
+	return Color;
+}
+
+float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
+{
+	const float2 PixelPosition = SvPosition.xy;
+	const float2 UV = PixelPosition * TextureSizeInverse;
+
+	float2 PointUV = PointSampleUV(UV);
+	float4 Initial = SourceTexture.Sample(SourceSampler, PointUV);
+
+	float4 Color = Initial;
+	float MaxDist = 1000000000000.0;
+	if (Initial.r > 0)
+	{
+		MaxDist = SquareDistance(PointUV, UnpackTwoNormalizedFloats(Initial.r));
+	}
+
+	for (int X = -1; X <= 1; X += 1)
+	{
+		for (int Y = -1; Y <= 1; Y += 1)
+		{
+			if (X == 0 && Y == 0) continue;
+
+			float2 Offset = float2(X, Y) * FloodStepSize;
+
+			float4 Sample = SourceTexture.Sample(SourceSampler, PointSampleUV(UV + Offset));
+			if (Sample.r > 0)
+			{
+				float2 UnpackedSampleUV = UnpackTwoNormalizedFloats(Sample.r);
+				float DistanceSquared = SquareDistance(PointUV, UnpackedSampleUV);
+				if (DistanceSquared < MaxDist)
+				{
+					Color = Sample;
+
+					float2 Delta = UnpackedSampleUV - PointUV;
+					Color.b = sqrt(DistanceSquared);
+					MaxDist = DistanceSquared;
+				}
+			}
+		}
+	}
+
+	return Color;
+}
+
+void CopyPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	float2 UV = SVPos.xy / CopyDestinationResolution;
+	OutColor = SourceTexture.Sample(SourceSampler, UV);
+}

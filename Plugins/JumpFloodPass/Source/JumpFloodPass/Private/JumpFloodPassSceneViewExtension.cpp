@@ -1,8 +1,5 @@
 #include "JumpFloodPassSceneViewExtension.h"
 #include "JumpFloodPassSettings.h"
-#include "JumpFloodSeedPass.h"
-#include "JumpFloodFloodPass.h"
-#include "JumpFloodCopyPass.h"
 
 #include "DynamicResolutionState.h"
 #include "PixelShaderUtils.h"
@@ -23,6 +20,50 @@ TAutoConsoleVariable<float> CVarJumpFloodRenderScale(
 	1.0f,
 	TEXT("Value to scale Jump Flooding render textures by. 1.0 scale is used when value is <= 0\n"),
 	ECVF_RenderThreadSafe);
+
+BEGIN_SHADER_PARAMETER_STRUCT(FJumpFloodPassParams,)
+	SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
+	SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters, SceneTextures)
+
+	SHADER_PARAMETER(FVector2f, ViewportSize)
+	SHADER_PARAMETER(FVector2f, TextureSize)
+	SHADER_PARAMETER(FVector2f, TextureSizeInverse)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SourceTexture)
+	SHADER_PARAMETER_SAMPLER(SamplerState, SourceSampler)
+
+	SHADER_PARAMETER(float, FloodStepSize)
+
+	SHADER_PARAMETER(FVector2f, CopyDestinationResolution)
+
+	RENDER_TARGET_BINDING_SLOTS()
+END_SHADER_PARAMETER_STRUCT()
+
+class FJumpFloodSeedPassPS : public FGlobalShader
+{
+	DECLARE_EXPORTED_SHADER_TYPE(FJumpFloodSeedPassPS, Global, );
+	using FParameters = FJumpFloodPassParams;
+	SHADER_USE_PARAMETER_STRUCT(FJumpFloodSeedPassPS, FGlobalShader);
+};
+
+IMPLEMENT_SHADER_TYPE(, FJumpFloodSeedPassPS, TEXT("/Plugin/JumpFloodPass/Private/JumpFloodPass.usf"), TEXT("SeedPS"), SF_Pixel);
+
+class FJumpFloodFloodPassPS : public FGlobalShader
+{
+	DECLARE_EXPORTED_SHADER_TYPE(FJumpFloodFloodPassPS, Global, );
+	using FParameters = FJumpFloodPassParams;
+	SHADER_USE_PARAMETER_STRUCT(FJumpFloodFloodPassPS, FGlobalShader);
+};
+
+IMPLEMENT_SHADER_TYPE(, FJumpFloodFloodPassPS, TEXT("/Plugin/JumpFloodPass/Private/JumpFloodPass.usf"), TEXT("FloodPS"), SF_Pixel);
+
+class FJumpFloodCopyPassPS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FJumpFloodCopyPassPS);
+	using FParameters = FJumpFloodPassParams;
+	SHADER_USE_PARAMETER_STRUCT(FJumpFloodCopyPassPS, FGlobalShader);
+};
+
+IMPLEMENT_SHADER_TYPE(, FJumpFloodCopyPassPS, TEXT("/Plugin/JumpFloodPass/Private/JumpFloodPass.usf"), TEXT("CopyPS"), SF_Pixel);
 
 bool FJumpFloodPassSceneViewExtension::IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const
 {
@@ -145,9 +186,9 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	//  Final stretched copy pass
 	{
 		FJumpFloodCopyPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodCopyPassPS::FParameters>();
-		Parameters->InSource = JumpFloodTextures[WriteIndex];
-		Parameters->InSourceSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-		Parameters->InDestinationResolution = RenderViewport.Size();
+		Parameters->SourceTexture = JumpFloodTextures[WriteIndex];
+		Parameters->SourceSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		Parameters->CopyDestinationResolution = RenderViewport.Size();
 
 		Parameters->RenderTargets[0] = FRenderTargetBinding(RenderTargetTexture, ERenderTargetLoadAction::EClear);
 
@@ -167,13 +208,13 @@ void FJumpFloodPassSceneViewExtension::AddFloodPass_RenderThread(
 	float ExponentToUVScaler)
 {
 	FJumpFloodFloodPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodFloodPassPS::FParameters>();
-	Parameters->TextureSize = ReadTexture->Desc.Extent;
-	Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
 	Parameters->View = ViewInfo.ViewUniformBuffer;
 	Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), ViewInfo.GetFeatureLevel(), ESceneTextureSetupMode::All);
-	Parameters->JumpFloodTexture = ReadTexture;
-	Parameters->JumpFloodSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	Parameters->StepSize = ((float) (1 << FloodExponent)) * ExponentToUVScaler;
+	Parameters->TextureSize = ReadTexture->Desc.Extent;
+	Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
+	Parameters->SourceTexture = ReadTexture;
+	Parameters->SourceSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+	Parameters->FloodStepSize = ((float) (1 << FloodExponent)) * ExponentToUVScaler;
 
 	Parameters->RenderTargets[0] = FRenderTargetBinding(WriteTexture, ERenderTargetLoadAction::ELoad);
 
