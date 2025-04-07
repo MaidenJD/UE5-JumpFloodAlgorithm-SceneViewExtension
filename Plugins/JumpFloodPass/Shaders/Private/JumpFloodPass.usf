@@ -88,7 +88,7 @@ float4 SeedPS(float4 SvPosition : SV_POSITION) : SV_Target0 {
 	const float2 UV = PixelPosition * TextureSizeInverse;
 	const float2 ScreenPosition = UV * ViewportSize;
 
-	Color = float4(0.0, 0.0, 0.0, 1.0);
+	Color = float4(0.0, 0.0, 0.0, 0.0);
 
 	int StencilValue = CalcSceneCustomStencil(ScreenPosition);
 	if (StencilValue > 0)
@@ -114,7 +114,7 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 
 	float4 Color = Initial;
 	float MaxDist = 1000000000000.0;
-	if (Initial.r > 0)
+	if (Initial.a != 0)
 	{
 		MaxDist = SquareDistance(PointUV, UnpackTwoNormalizedFloats(Initial.r));
 	}
@@ -128,17 +128,16 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 			float2 Offset = float2(X, Y) * FloodStepSize;
 
 			float4 Sample = SourceTexture.Sample(SourceSampler, PointSampleUV(UV + Offset));
-			if (Sample.r > 0)
+			if (Sample.a != 0)
 			{
 				float2 UnpackedSampleUV = UnpackTwoNormalizedFloats(Sample.r);
 				float DistanceSquared = SquareDistance(PointUV, UnpackedSampleUV);
 				if (DistanceSquared < MaxDist)
 				{
 					Color = Sample;
-
-					float2 Delta = UnpackedSampleUV - PointUV;
 					Color.b = sqrt(DistanceSquared);
-					Color.a = Initial.a;
+					Color.a = Sample.a;
+
 					MaxDist = DistanceSquared;
 				}
 			}
@@ -154,6 +153,13 @@ void CopyPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
 	float4 Sample = SourceTexture.Sample(SourceSampler, UV);
 
 	OutColor.rg = Sample.rg;
-	OutColor.b = Sample.b * Sample.a;
-	OutColor.a = 1.0;
+	OutColor.b = Sample.b * Sample.a;	// This converts the distance field to a signed distance field, applying the alpha's setup in a Seed Pass
+
+	OutColor.a = abs(Sample.a);
+
+	//  Valid UV's should never be 0 (Two packed floats)
+	if (OutColor.g == 0.0)
+	{
+		OutColor.a = 0;
+	}
 }

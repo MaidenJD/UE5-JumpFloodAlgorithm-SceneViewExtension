@@ -119,6 +119,7 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	const FIntRect RenderViewport = FIntRect(0, 0, RenderTargetTexture->Desc.Extent.X, RenderTargetTexture->Desc.Extent.Y);
 
 	FRDGTextureDesc IntermediateTargetDesc = RenderTargetTexture->Desc;
+	IntermediateTargetDesc.ClearValue = FClearValueBinding::Transparent;
 	IntermediateTargetDesc.Extent =
 		FIntPoint {
 			(int32) ((float) IntermediateTargetDesc.Extent.X * RenderScale),
