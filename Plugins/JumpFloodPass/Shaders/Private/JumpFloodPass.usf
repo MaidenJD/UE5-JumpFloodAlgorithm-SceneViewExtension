@@ -33,12 +33,14 @@ float SobelEdgeDetection(float2 ScreenPosition)
 	float Gx = 0.0;
 	float Gy = 0.0;
 
+	const float OffsetScaler = (ViewportSize * TextureSizeInverse);
+
 	// Sample 3x3 neighborhood
 	for (int i = -1; i <= 1; i++)
 	{
 		for (int j = -1; j <= 1; j++)
 		{
-			float2 OffsetScreenPosition = ScreenPosition + float2(i, j);
+			float2 OffsetScreenPosition = ScreenPosition + float2(i, j) * OffsetScaler;
 			float Stencil = CalcSceneCustomStencil(OffsetScreenPosition);
 
 			Gx += Stencil * KernelX[i + 1][j + 1];
@@ -118,9 +120,11 @@ void FloodPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Targ
 void CopyPS(in float4 SVPos : SV_POSITION, out float4 PrimaryOutput : SV_Target0, out float4 SecondaryOutput : SV_Target1)
 {
 	const int2 PixelPosition = SVPos.xy;
+	const float2 UV = PixelPosition / CopyDestinationResolution;
+	const float2 TexelPosition = UV * TextureSize;
 
-	const float4 PrimarySample = PrimaryTexture.Load(int3(PixelPosition, 0));
-	const float4 SecondarySample = SecondaryTexture.Load(int3(PixelPosition, 0));
+	const float4 PrimarySample = PrimaryTexture.Load(int3(TexelPosition, 0));
+	const float4 SecondarySample = SecondaryTexture.Load(int3(TexelPosition, 0));
 
 	//  Valid Stencils will never be 0
 	if (step(0, PrimaryOutput.g))
@@ -130,8 +134,10 @@ void CopyPS(in float4 SVPos : SV_POSITION, out float4 PrimaryOutput : SV_Target0
 
 	if (step(PrimaryOutput.g, 0))
 	{
-		PrimaryOutput.rg = PrimarySample.rg / CopyDestinationResolution;
-		PrimaryOutput.b = sqrt(PrimarySample.b) * (step(CalcSceneCustomStencil(PixelPosition), 0) * 2.0 - 1.0); //  If the Pixel is stenciled, then this is an inner distance so will be multiplies by -1.0. Otherwise it will be scaled by 1.0;
+		const float DistanceScaler = (CopyDestinationResolution * TextureSizeInverse); //Ensures consistent distances when using downscaling
+
+		PrimaryOutput.rg = PrimarySample.rg * TextureSizeInverse;
+		PrimaryOutput.b = sqrt(PrimarySample.b) * (step(CalcSceneCustomStencil(PixelPosition), 0) * 2.0 - 1.0) * DistanceScaler; //  If the Pixel is stenciled, then this is an inner distance so will be multiplies by -1.0. Otherwise it will be scaled by 1.0;
 		PrimaryOutput.a = abs(PrimarySample.a);
 
 		SecondaryOutput = SecondarySample;

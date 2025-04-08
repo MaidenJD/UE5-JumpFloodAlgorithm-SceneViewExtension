@@ -205,6 +205,8 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 		Parameters->PrimaryTexture = PrimaryTextures[WriteIndex];
 		Parameters->SecondaryTexture = SecondaryTextures[WriteIndex];
 		Parameters->CopyDestinationResolution = RenderViewport.Size();
+		Parameters->TextureSize = IntermediateTargetDesc.Extent;
+		Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / IntermediateTargetDesc.Extent;
 		Parameters->View = InView.ViewUniformBuffer;
 		Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), InView.GetFeatureLevel(), ESceneTextureSetupMode::All);
 
