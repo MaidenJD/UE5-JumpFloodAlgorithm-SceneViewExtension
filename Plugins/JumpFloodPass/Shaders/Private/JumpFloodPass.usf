@@ -32,12 +32,15 @@ float PackTwoNormalizedFloats(float A, float B)
 
 float2 UnpackTwoNormalizedFloats(float Packed)
 {
-	int Precision = 4096;
-	float2 Output = 0;
+	const int Precision = 4096;
+	const float PrecisionInverse = 0.000244140625;
+	const float PrecisionMinusOneInverse = 0.0002442002442002442;
 
-	Output.y = fmod(Packed , Precision);
-	Output.x = floor(Packed / Precision);
-	Output /= (Precision - 1);
+	float2 Output = 0;
+	Output.x = floor(Packed * PrecisionInverse);
+	Output.y = Packed - Output.x * Precision;
+	Output *= PrecisionMinusOneInverse;
+
 	return Output;
 }
 
@@ -113,7 +116,7 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 	float4 Initial = SourceTexture.Sample(SourceSampler, PointUV);
 
 	float4 Color = Initial;
-	float MaxDist = 1000000000000.0;
+	float MaxDist = 100000000000000.0;
 	if (Initial.a != 0)
 	{
 		MaxDist = SquareDistance(PointUV, UnpackTwoNormalizedFloats(Initial.r));
@@ -135,8 +138,7 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 				if (DistanceSquared < MaxDist)
 				{
 					Color = Sample;
-					Color.b = sqrt(DistanceSquared);
-					Color.a = Sample.a;
+					Color.b = DistanceSquared;
 
 					MaxDist = DistanceSquared;
 				}
@@ -152,13 +154,13 @@ void CopyPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
 	float2 UV = SVPos.xy / CopyDestinationResolution;
 	float4 Sample = SourceTexture.Sample(SourceSampler, UV);
 
+	//  Wanted to wrap these in a branch, but doing that causes unreal to remove passes??
 	OutColor.rg = Sample.rg;
-	OutColor.b = Sample.b * Sample.a;	// This converts the distance field to a signed distance field, applying the alpha's setup in a Seed Pass
-
+	OutColor.b = sqrt(Sample.b) * Sample.a;	// This converts the distance field to a signed distance field, applying the alpha's setup in a Seed Pass
 	OutColor.a = abs(Sample.a);
 
-	//  Valid UV's should never be 0 (Two packed floats)
-	if (OutColor.g == 0.0)
+	//  Valid Stencils will never be 0
+	if (OutColor.g == 0)
 	{
 		OutColor.a = 0;
 	}
