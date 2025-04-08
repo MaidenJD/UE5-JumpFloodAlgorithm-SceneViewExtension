@@ -28,7 +28,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FJumpFloodPassParams,)
 	SHADER_PARAMETER(FVector2f, ViewportSize)
 	SHADER_PARAMETER(FVector2f, TextureSize)
 	SHADER_PARAMETER(FVector2f, TextureSizeInverse)
-	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SourceTexture)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, PrimaryTexture)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SecondaryTexture)
 
 	SHADER_PARAMETER(float, FloodStepSize)
@@ -202,9 +202,11 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	//  Final stretched copy pass
 	{
 		FJumpFloodCopyPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodCopyPassPS::FParameters>();
-		Parameters->SourceTexture = PrimaryTextures[WriteIndex];
+		Parameters->PrimaryTexture = PrimaryTextures[WriteIndex];
 		Parameters->SecondaryTexture = SecondaryTextures[WriteIndex];
 		Parameters->CopyDestinationResolution = RenderViewport.Size();
+		Parameters->View = InView.ViewUniformBuffer;
+		Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), InView.GetFeatureLevel(), ESceneTextureSetupMode::All);
 
 		Parameters->RenderTargets[0] = FRenderTargetBinding(PrimaryRenderTargetTexture, ERenderTargetLoadAction::EClear);
 		Parameters->RenderTargets[1] = FRenderTargetBinding(SecondaryRenderTargetTexture, ERenderTargetLoadAction::EClear);
@@ -231,7 +233,7 @@ void FJumpFloodPassSceneViewExtension::AddFloodPass_RenderThread(
 	Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), ViewInfo.GetFeatureLevel(), ESceneTextureSetupMode::All);
 	Parameters->TextureSize = PrimaryReadTexture->Desc.Extent;
 	Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
-	Parameters->SourceTexture = PrimaryReadTexture;
+	Parameters->PrimaryTexture = PrimaryReadTexture;
 	Parameters->SecondaryTexture = SecondaryReadTexture;
 	Parameters->FloodStepSize = ((float) (1 << FloodExponent));
 

@@ -7,42 +7,12 @@ float2 ViewportSize;
 float2 TextureSize;
 float2 TextureSizeInverse;
 
-Texture2D<float4> SourceTexture;
+Texture2D<float4> PrimaryTexture;
 Texture2D<float4> SecondaryTexture;
 
 float FloodStepSize;
 
 float2 CopyDestinationResolution;
-
-float2 PointSampleUV(float2 UV)
-{
-	return (floor(UV * TextureSize) + 0.5) * TextureSizeInverse;
-}
-
-float PackTwoNormalizedFloats(float A, float B)
-{
-	int Precision = 4096;
-	int PrecisionMinusOne = Precision - 1;
-
-	A = floor(A * PrecisionMinusOne);
-	B = floor(B * PrecisionMinusOne);
-
-	return (A * Precision) + B;
-}
-
-float2 UnpackTwoNormalizedFloats(float Packed)
-{
-	const int Precision = 4096;
-	const float PrecisionInverse = 0.000244140625;
-	const float PrecisionMinusOneInverse = 0.0002442002442002442;
-
-	float2 Output = 0;
-	Output.x = floor(Packed * PrecisionInverse);
-	Output.y = Packed - Output.x * Precision;
-	Output *= PrecisionMinusOneInverse;
-
-	return Output;
-}
 
 float SobelEdgeDetection(float2 ScreenPosition)
 {
@@ -85,8 +55,6 @@ float SquareDistance(float2 A, float2 B)
 }
 
 void SeedPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Target0, out float4 SecondaryOutput : SV_Target1) {
-	float4 Color = float4(0.0, 0.0, 0.0, 0.0);
-
 	const float2 PixelPosition = SvPosition.xy;
 	const float2 UV = PixelPosition * TextureSizeInverse;
 	const float2 ScreenPosition = UV * ViewportSize;
@@ -97,11 +65,10 @@ void SeedPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Targe
 	int StencilValue = CalcSceneCustomStencil(ScreenPosition);
 	if (StencilValue > 0)
 	{
-		Color.a = -1.0;
 		if (SobelEdgeDetection(ScreenPosition) > 0)
 		{
 			PrimaryOutput = float4(PixelPosition, 0.0, 1.0);
-			SecondaryOutput = float4(StencilValue, 0.0, 0.0, 0.0);
+			SecondaryOutput = float4(StencilValue, CalcSceneDepth(UV), 0.0, 0.0);
 		}
 	}
 }
@@ -110,9 +77,10 @@ void FloodPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Targ
 {
 	const float2 PixelPosition = SvPosition.xy;
 
-	PrimaryOutput = SourceTexture.Load(int3(PixelPosition, 0));
+	PrimaryOutput = PrimaryTexture.Load(int3(PixelPosition, 0));
 	SecondaryOutput = SecondaryTexture.Load(int3(PixelPosition, 0));
 
+	float2 BestOffset = float2(0, 0);
 	float MaxDist = 1e20;
 
 	if (PrimaryOutput.a != 0)
@@ -128,7 +96,7 @@ void FloodPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Targ
 
 			float2 Offset = float2(X, Y) * FloodStepSize;
 
-			float4 PrimarySample = SourceTexture.Load(int3(PixelPosition + Offset, 0));
+			float4 PrimarySample = PrimaryTexture.Load(int3(PixelPosition + Offset, 0));
 			if (PrimarySample.a != 0)
 			{
 				float DistanceSquared = SquareDistance(PixelPosition, PrimarySample.rg);
@@ -137,31 +105,35 @@ void FloodPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Targ
 					PrimaryOutput = PrimarySample;
 					PrimaryOutput.b = DistanceSquared;
 
-					SecondaryOutput = SecondaryTexture.Load(int3(PixelPosition + Offset, 0));
-
 					MaxDist = DistanceSquared;
+					BestOffset = Offset;
 				}
 			}
 		}
 	}
+
+	SecondaryOutput = SecondaryTexture.Load(int3(PixelPosition + BestOffset, 0));
 }
 
 void CopyPS(in float4 SVPos : SV_POSITION, out float4 PrimaryOutput : SV_Target0, out float4 SecondaryOutput : SV_Target1)
 {
-	float4 PrimarySample = SourceTexture.Load(int3(SVPos.xy, 0));
-	float4 SecondarySample = SecondaryTexture.Load(int3(SVPos.xy, 0));
+	const int2 PixelPosition = SVPos.xy;
 
-	//  Wanted to wrap these in a branch, but doing that causes unreal to remove passes??
-	PrimaryOutput.rg = PrimarySample.rg / CopyDestinationResolution;
-	PrimaryOutput.b = sqrt(PrimarySample.b) * PrimarySample.a;	// This converts the distance field to a signed distance field, applying the alpha's setup in a Seed Pass
-	PrimaryOutput.a = abs(PrimarySample.a);
+	const float4 PrimarySample = PrimaryTexture.Load(int3(PixelPosition, 0));
+	const float4 SecondarySample = SecondaryTexture.Load(int3(PixelPosition, 0));
 
 	//  Valid Stencils will never be 0
-	if (PrimaryOutput.g == 0)
+	if (step(0, PrimaryOutput.g))
 	{
 		PrimaryOutput.a = 0;
 	}
 
-	SecondaryOutput = SecondarySample;
-	SecondaryOutput.r /= 255.0;
+	if (step(PrimaryOutput.g, 0))
+	{
+		PrimaryOutput.rg = PrimarySample.rg / CopyDestinationResolution;
+		PrimaryOutput.b = sqrt(PrimarySample.b) * (step(CalcSceneCustomStencil(PixelPosition), 0) * 2.0 - 1.0); //  If the Pixel is stenciled, then this is an inner distance so will be multiplies by -1.0. Otherwise it will be scaled by 1.0;
+		PrimaryOutput.a = abs(PrimarySample.a);
+
+		SecondaryOutput = SecondarySample;
+	}
 }
