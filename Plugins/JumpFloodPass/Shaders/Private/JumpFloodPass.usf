@@ -8,7 +8,7 @@ float2 TextureSize;
 float2 TextureSizeInverse;
 
 Texture2D<float4> SourceTexture;
-SamplerState SourceSampler;
+Texture2D<float4> SecondaryTexture;
 
 float FloodStepSize;
 
@@ -84,14 +84,15 @@ float SquareDistance(float2 A, float2 B)
 	return Square(B.x-A.x) + Square(B.y-A.y);
 }
 
-float4 SeedPS(float4 SvPosition : SV_POSITION) : SV_Target0 {
+void SeedPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Target0, out float4 SecondaryOutput : SV_Target1) {
 	float4 Color = float4(0.0, 0.0, 0.0, 0.0);
 
 	const float2 PixelPosition = SvPosition.xy;
 	const float2 UV = PixelPosition * TextureSizeInverse;
 	const float2 ScreenPosition = UV * ViewportSize;
 
-	Color = float4(0.0, 0.0, 0.0, 0.0);
+	PrimaryOutput   = float4(0.0, 0.0, 0.0, 0.0);
+	SecondaryOutput = float4(0.0, 0.0, 0.0, 0.0);
 
 	int StencilValue = CalcSceneCustomStencil(ScreenPosition);
 	if (StencilValue > 0)
@@ -99,27 +100,24 @@ float4 SeedPS(float4 SvPosition : SV_POSITION) : SV_Target0 {
 		Color.a = -1.0;
 		if (SobelEdgeDetection(ScreenPosition) > 0)
 		{
-			float PackedUV = PackTwoNormalizedFloats(UV.x, UV.y);
-			Color = float4(PackedUV, StencilValue, 0.0, 1.0);
+			PrimaryOutput = float4(PixelPosition, 0.0, 1.0);
+			SecondaryOutput = float4(StencilValue, 0.0, 0.0, 0.0);
 		}
 	}
-
-	return Color;
 }
 
-float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
+void FloodPS(float4 SvPosition : SV_POSITION, out float4 PrimaryOutput : SV_Target0, out float4 SecondaryOutput : SV_Target1)
 {
 	const float2 PixelPosition = SvPosition.xy;
-	const float2 UV = PixelPosition * TextureSizeInverse;
 
-	float2 PointUV = PointSampleUV(UV);
-	float4 Initial = SourceTexture.Sample(SourceSampler, PointUV);
+	PrimaryOutput = SourceTexture.Load(int3(PixelPosition, 0));
+	SecondaryOutput = SecondaryTexture.Load(int3(PixelPosition, 0));
 
-	float4 Color = Initial;
-	float MaxDist = 100000000000000.0;
-	if (Initial.a != 0)
+	float MaxDist = 1e20;
+
+	if (PrimaryOutput.a != 0)
 	{
-		MaxDist = SquareDistance(PointUV, UnpackTwoNormalizedFloats(Initial.r));
+		MaxDist = SquareDistance(PixelPosition, PrimaryOutput.rg);
 	}
 
 	for (int X = -1; X <= 1; X += 1)
@@ -130,38 +128,40 @@ float4 FloodPS(float4 SvPosition : SV_POSITION) : SV_Target0
 
 			float2 Offset = float2(X, Y) * FloodStepSize;
 
-			float4 Sample = SourceTexture.Sample(SourceSampler, PointSampleUV(UV + Offset));
-			if (Sample.a != 0)
+			float4 PrimarySample = SourceTexture.Load(int3(PixelPosition + Offset, 0));
+			if (PrimarySample.a != 0)
 			{
-				float2 UnpackedSampleUV = UnpackTwoNormalizedFloats(Sample.r);
-				float DistanceSquared = SquareDistance(PointUV, UnpackedSampleUV);
+				float DistanceSquared = SquareDistance(PixelPosition, PrimarySample.rg);
 				if (DistanceSquared < MaxDist)
 				{
-					Color = Sample;
-					Color.b = DistanceSquared;
+					PrimaryOutput = PrimarySample;
+					PrimaryOutput.b = DistanceSquared;
+
+					SecondaryOutput = SecondaryTexture.Load(int3(PixelPosition + Offset, 0));
 
 					MaxDist = DistanceSquared;
 				}
 			}
 		}
 	}
-
-	return Color;
 }
 
-void CopyPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+void CopyPS(in float4 SVPos : SV_POSITION, out float4 PrimaryOutput : SV_Target0, out float4 SecondaryOutput : SV_Target1)
 {
-	float2 UV = SVPos.xy / CopyDestinationResolution;
-	float4 Sample = SourceTexture.Sample(SourceSampler, UV);
+	float4 PrimarySample = SourceTexture.Load(int3(SVPos.xy, 0));
+	float4 SecondarySample = SecondaryTexture.Load(int3(SVPos.xy, 0));
 
 	//  Wanted to wrap these in a branch, but doing that causes unreal to remove passes??
-	OutColor.rg = Sample.rg;
-	OutColor.b = sqrt(Sample.b) * Sample.a;	// This converts the distance field to a signed distance field, applying the alpha's setup in a Seed Pass
-	OutColor.a = abs(Sample.a);
+	PrimaryOutput.rg = PrimarySample.rg / CopyDestinationResolution;
+	PrimaryOutput.b = sqrt(PrimarySample.b) * PrimarySample.a;	// This converts the distance field to a signed distance field, applying the alpha's setup in a Seed Pass
+	PrimaryOutput.a = abs(PrimarySample.a);
 
 	//  Valid Stencils will never be 0
-	if (OutColor.g == 0)
+	if (PrimaryOutput.g == 0)
 	{
-		OutColor.a = 0;
+		PrimaryOutput.a = 0;
 	}
+
+	SecondaryOutput = SecondarySample;
+	SecondaryOutput.r /= 255.0;
 }

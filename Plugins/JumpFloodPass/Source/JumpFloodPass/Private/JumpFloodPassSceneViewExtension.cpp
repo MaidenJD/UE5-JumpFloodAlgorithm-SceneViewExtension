@@ -29,7 +29,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FJumpFloodPassParams,)
 	SHADER_PARAMETER(FVector2f, TextureSize)
 	SHADER_PARAMETER(FVector2f, TextureSizeInverse)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SourceTexture)
-	SHADER_PARAMETER_SAMPLER(SamplerState, SourceSampler)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SecondaryTexture)
 
 	SHADER_PARAMETER(float, FloodStepSize)
 
@@ -67,7 +67,9 @@ IMPLEMENT_SHADER_TYPE(, FJumpFloodCopyPassPS, TEXT("/Plugin/JumpFloodPass/Privat
 
 bool FJumpFloodPassSceneViewExtension::IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const
 {
-	return UJumpFloodPassSettings::IsEnabled() && IsValid(RenderTarget);
+	return UJumpFloodPassSettings::IsEnabled()
+		&& IsValid(PrimaryRenderTarget)
+		&& IsValid(SecondaryRenderTarget);
 }
 
 void FJumpFloodPassSceneViewExtension::SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView)
@@ -83,10 +85,12 @@ void FJumpFloodPassSceneViewExtension::SetupView(FSceneViewFamily& InViewFamily,
 		ViewRect = ViewRect.Scale(ScreenPercentage);
 		FIntPoint ViewSize { ViewRect.Width(), ViewRect.Height() };
 
-		if (RenderTarget->GetSurfaceWidth() != ViewSize.X || RenderTarget->GetSurfaceHeight() != ViewSize.Y)
+		if (PrimaryRenderTarget->GetSurfaceWidth() != ViewSize.X || PrimaryRenderTarget->GetSurfaceHeight() != ViewSize.Y)
 		{
-			RenderTarget->InitAutoFormat(ViewSize.X, ViewSize.Y);
-			bShouldRecreatePooledRenderTarget = true;
+			PrimaryRenderTarget->InitAutoFormat(ViewSize.X, ViewSize.Y);
+			SecondaryRenderTarget->InitAutoFormat(ViewSize.X, ViewSize.Y);
+
+			bShouldRecreatePooledRenderTargets = true;
 		}
 	}
 }
@@ -98,7 +102,7 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 
 	FSceneViewExtensionBase::PostRenderBasePassDeferred_RenderThread(GraphBuilder, InView, RenderTargets, SceneTextures);
 
-	if(!IsValid(RenderTarget))
+	if (!IsActiveThisFrame_Internal(FSceneViewExtensionContext{}))
 	{
 		return;
 	}
@@ -108,17 +112,18 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 
 	const FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
-	RDG_EVENT_SCOPE(GraphBuilder, "Jump Flood");
+	RDG_EVENT_SCOPE(GraphBuilder, "JumpFlood");
 
-	if (bShouldRecreatePooledRenderTarget)
+	if (bShouldRecreatePooledRenderTargets)
 	{
-		CreatePooledRenderTarget_RenderThread();
+		CreatePooledRenderTargets_RenderThread();
 	}
 
-	FRDGTextureRef RenderTargetTexture = GraphBuilder.RegisterExternalTexture(PooledRenderTarget, TEXT("Jump Flood Render Target"));
-	const FIntRect RenderViewport = FIntRect(0, 0, RenderTargetTexture->Desc.Extent.X, RenderTargetTexture->Desc.Extent.Y);
+	FRDGTextureRef PrimaryRenderTargetTexture = GraphBuilder.RegisterExternalTexture(PooledPrimaryRenderTarget, TEXT("JumpFloodTarget_0"));
+	FRDGTextureRef SecondaryRenderTargetTexture = GraphBuilder.RegisterExternalTexture(PooledSecondaryRenderTarget, TEXT("JumpFloodTarget_1"));
+	const FIntRect RenderViewport = FIntRect(0, 0, PrimaryRenderTargetTexture->Desc.Extent.X, PrimaryRenderTargetTexture->Desc.Extent.Y);
 
-	FRDGTextureDesc IntermediateTargetDesc = RenderTargetTexture->Desc;
+	FRDGTextureDesc IntermediateTargetDesc = PrimaryRenderTargetTexture->Desc;
 	IntermediateTargetDesc.ClearValue = FClearValueBinding::Transparent;
 	IntermediateTargetDesc.Extent =
 		FIntPoint {
@@ -127,9 +132,14 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 
 	const FIntRect IntermediateViewport = FIntRect(0, 0, IntermediateTargetDesc.Extent.X, IntermediateTargetDesc.Extent.Y);
 
-	FRDGTextureRef JumpFloodTextures[] = {
-		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("Jump Flood Intermediate Target A")),
-		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("Jump Flood Intermediate Target B")),
+	FRDGTextureRef PrimaryTextures[] = {
+		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("JumpFloodIntermediateTarget_0_0")),
+		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("JumpFloodIntermediateTarget_0_1")),
+	};
+
+	FRDGTextureRef SecondaryTextures[] = {
+		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("JumpFloodIntermediateTarget_1_0")),
+		GraphBuilder.CreateTexture(IntermediateTargetDesc, TEXT("JumpFloodIntermediateTarget_1_1")),
 	};
 
 	int32 ReadIndex  = 0;
@@ -138,17 +148,18 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	//  Init Pass
 	{
 		FJumpFloodSeedPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodSeedPassPS::FParameters>();
-		Parameters->TextureSize = JumpFloodTextures[WriteIndex]->Desc.Extent;
+		Parameters->TextureSize = PrimaryTextures[WriteIndex]->Desc.Extent;
 		Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
 		Parameters->ViewportSize = RenderViewport.Size();
 		Parameters->View = InView.ViewUniformBuffer;
 		Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), InView.GetFeatureLevel(), ESceneTextureSetupMode::All);
 
 		// We're going to also clear the render target
-		Parameters->RenderTargets[0] = FRenderTargetBinding(JumpFloodTextures[WriteIndex], ERenderTargetLoadAction::EClear);
+		Parameters->RenderTargets[0] = FRenderTargetBinding(PrimaryTextures[WriteIndex], ERenderTargetLoadAction::EClear);
+		Parameters->RenderTargets[1] = FRenderTargetBinding(SecondaryTextures[WriteIndex], ERenderTargetLoadAction::EClear);
 
 		TShaderMapRef<FJumpFloodSeedPassPS> PixelShader(GlobalShaderMap);
-		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("Jump Flood: Seed")), PixelShader, Parameters, IntermediateViewport);
+		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("JumpFlood - Seed")), PixelShader, Parameters, IntermediateViewport);
 	}
 
 	//  Flood Passes
@@ -163,8 +174,10 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 			GlobalShaderMap,
 			ViewInfo,
 			IntermediateViewport,
-			JumpFloodTextures[ReadIndex],
-			JumpFloodTextures[WriteIndex],
+			PrimaryTextures[ReadIndex],
+			PrimaryTextures[WriteIndex],
+			SecondaryTextures[ReadIndex],
+			SecondaryTextures[WriteIndex],
 			0,
 			LargestSideInverse);
 			
@@ -177,8 +190,10 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 				GlobalShaderMap,
 				ViewInfo,
 				IntermediateViewport,
-				JumpFloodTextures[ReadIndex],
-				JumpFloodTextures[WriteIndex],
+				PrimaryTextures[ReadIndex],
+				PrimaryTextures[WriteIndex],
+				SecondaryTextures[ReadIndex],
+				SecondaryTextures[WriteIndex],
 				FloodExponent,
 				LargestSideInverse);
 		}
@@ -187,14 +202,15 @@ void FJumpFloodPassSceneViewExtension::PostRenderBasePassDeferred_RenderThread(F
 	//  Final stretched copy pass
 	{
 		FJumpFloodCopyPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodCopyPassPS::FParameters>();
-		Parameters->SourceTexture = JumpFloodTextures[WriteIndex];
-		Parameters->SourceSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		Parameters->SourceTexture = PrimaryTextures[WriteIndex];
+		Parameters->SecondaryTexture = SecondaryTextures[WriteIndex];
 		Parameters->CopyDestinationResolution = RenderViewport.Size();
 
-		Parameters->RenderTargets[0] = FRenderTargetBinding(RenderTargetTexture, ERenderTargetLoadAction::EClear);
+		Parameters->RenderTargets[0] = FRenderTargetBinding(PrimaryRenderTargetTexture, ERenderTargetLoadAction::EClear);
+		Parameters->RenderTargets[1] = FRenderTargetBinding(SecondaryRenderTargetTexture, ERenderTargetLoadAction::EClear);
 
 		TShaderMapRef<FJumpFloodCopyPassPS> PixelShader(GlobalShaderMap);
-		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("Jump Flood: Copy")), PixelShader, Parameters, RenderViewport);
+		FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("JumpFlood - Resolve")), PixelShader, Parameters, RenderViewport);
 	}
 }
 
@@ -203,40 +219,60 @@ void FJumpFloodPassSceneViewExtension::AddFloodPass_RenderThread(
 	const FGlobalShaderMap* GlobalShaderMap,
 	const FViewInfo& ViewInfo,
 	const FIntRect& IntermediateViewport,
-	const FRDGTextureRef& ReadTexture,
-	const FRDGTextureRef& WriteTexture,
+	const FRDGTextureRef& PrimaryReadTexture,
+	const FRDGTextureRef& PrimaryWriteTexture,
+	const FRDGTextureRef& SecondaryReadTexture,
+	const FRDGTextureRef& SecondaryWriteTexture,
 	int32 FloodExponent,
 	float ExponentToUVScaler)
 {
 	FJumpFloodFloodPassPS::FParameters* Parameters = GraphBuilder.AllocParameters<FJumpFloodFloodPassPS::FParameters>();
 	Parameters->View = ViewInfo.ViewUniformBuffer;
 	Parameters->SceneTextures = CreateSceneTextureShaderParameters(GraphBuilder, ViewInfo.GetSceneTexturesChecked(), ViewInfo.GetFeatureLevel(), ESceneTextureSetupMode::All);
-	Parameters->TextureSize = ReadTexture->Desc.Extent;
+	Parameters->TextureSize = PrimaryReadTexture->Desc.Extent;
 	Parameters->TextureSizeInverse = FVector2f(1.0f, 1.0f) / Parameters->TextureSize;
-	Parameters->SourceTexture = ReadTexture;
-	Parameters->SourceSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	Parameters->FloodStepSize = ((float) (1 << FloodExponent)) * ExponentToUVScaler;
+	Parameters->SourceTexture = PrimaryReadTexture;
+	Parameters->SecondaryTexture = SecondaryReadTexture;
+	Parameters->FloodStepSize = ((float) (1 << FloodExponent));
 
-	Parameters->RenderTargets[0] = FRenderTargetBinding(WriteTexture, ERenderTargetLoadAction::ELoad);
+	Parameters->RenderTargets[0] = FRenderTargetBinding(PrimaryWriteTexture, ERenderTargetLoadAction::ELoad);
+	Parameters->RenderTargets[1] = FRenderTargetBinding(SecondaryWriteTexture, ERenderTargetLoadAction::ELoad);
 
 	TShaderMapRef<FJumpFloodFloodPassPS> PixelShader(GlobalShaderMap);
-	FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("Jump Flood: Flood %d"), (1 << FloodExponent)), PixelShader, Parameters, IntermediateViewport);
+	FPixelShaderUtils::AddFullscreenPass(GraphBuilder, GlobalShaderMap, FRDGEventName(TEXT("JumpFlood - Flood (%d)"), (1 << FloodExponent)), PixelShader, Parameters, IntermediateViewport);
 }
 
-void FJumpFloodPassSceneViewExtension::CreatePooledRenderTarget_RenderThread()
+void FJumpFloodPassSceneViewExtension::CreatePooledRenderTargets_RenderThread()
 {
 	checkf(IsInRenderingThread() || IsInRHIThread(), TEXT("Cannot create from outside the rendering thread"));
 
-	// Render target resources require the render thread
-	const FTextureRenderTargetResource* RenderTargetResource = RenderTarget->GetRenderTargetResource();
-	const FTexture2DRHIRef RenderTargetRHI = RenderTargetResource->GetRenderTargetTexture();
+	{
+		// Render target resources require the render thread
+		const FTextureRenderTargetResource* RenderTargetResource = PrimaryRenderTarget->GetRenderTargetResource();
+		const FTexture2DRHIRef RenderTargetRHI = RenderTargetResource->GetRenderTargetTexture();
 
-	FSceneRenderTargetItem RenderTargetItem;
-	RenderTargetItem.TargetableTexture = RenderTargetRHI;
-	RenderTargetItem.ShaderResourceTexture = RenderTargetRHI;
+		FSceneRenderTargetItem RenderTargetItem;
+		RenderTargetItem.TargetableTexture = RenderTargetRHI;
+		RenderTargetItem.ShaderResourceTexture = RenderTargetRHI;
 
-	// Flags allow it to be used as a render target, shader resource, UAV
-	FPooledRenderTargetDesc RenderTargetDesc = FPooledRenderTargetDesc::Create2DDesc(RenderTargetResource->GetSizeXY(), RenderTargetRHI->GetDesc().Format, FClearValueBinding::Black, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV, TexCreate_None, false);
+		// Flags allow it to be used as a render target, shader resource, UAV
+		FPooledRenderTargetDesc RenderTargetDesc = FPooledRenderTargetDesc::Create2DDesc(RenderTargetResource->GetSizeXY(), RenderTargetRHI->GetDesc().Format, FClearValueBinding::Black, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV, TexCreate_None, false);
 
-	GRenderTargetPool.CreateUntrackedElement(RenderTargetDesc, PooledRenderTarget, RenderTargetItem);
+		GRenderTargetPool.CreateUntrackedElement(RenderTargetDesc, PooledPrimaryRenderTarget, RenderTargetItem);
+	}
+
+	{
+		// Render target resources require the render thread
+		const FTextureRenderTargetResource* RenderTargetResource = SecondaryRenderTarget->GetRenderTargetResource();
+		const FTexture2DRHIRef RenderTargetRHI = RenderTargetResource->GetRenderTargetTexture();
+
+		FSceneRenderTargetItem RenderTargetItem;
+		RenderTargetItem.TargetableTexture = RenderTargetRHI;
+		RenderTargetItem.ShaderResourceTexture = RenderTargetRHI;
+
+		// Flags allow it to be used as a render target, shader resource, UAV
+		FPooledRenderTargetDesc RenderTargetDesc = FPooledRenderTargetDesc::Create2DDesc(RenderTargetResource->GetSizeXY(), RenderTargetRHI->GetDesc().Format, FClearValueBinding::Black, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV, TexCreate_None, false);
+
+		GRenderTargetPool.CreateUntrackedElement(RenderTargetDesc, PooledSecondaryRenderTarget, RenderTargetItem);
+	}
 }

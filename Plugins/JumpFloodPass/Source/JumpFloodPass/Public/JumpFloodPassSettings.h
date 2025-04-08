@@ -19,7 +19,8 @@ class JUMPFLOODPASS_API UJumpFloodPassSettings : public UDeveloperSettings
 public:
 
 	static bool IsEnabled() { return GetDefault<ThisClass>()->bEnabled; }
-	static TSoftObjectPtr<UTextureRenderTarget2D> GetRenderTarget() { return GetDefault<ThisClass>()->RenderTarget; }
+	static TSoftObjectPtr<UTextureRenderTarget2D> GetPrimaryRenderTarget() { return GetDefault<ThisClass>()->PrimaryRenderTarget; }
+	static TSoftObjectPtr<UTextureRenderTarget2D> GetSecondaryRenderTarget() { return GetDefault<ThisClass>()->SecondaryRenderTarget; }
 
 	//~ Begin UDeveloperSettings Interface
 	virtual FName GetContainerName() const override final { return FName("Project"); }
@@ -33,6 +34,9 @@ private:
 	bool bEnabled = true;
 
 	UPROPERTY(Config, EditAnywhere)
-	TSoftObjectPtr<UTextureRenderTarget2D> RenderTarget;
+	TSoftObjectPtr<UTextureRenderTarget2D> PrimaryRenderTarget;
+
+	UPROPERTY(Config, EditAnywhere)
+	TSoftObjectPtr<UTextureRenderTarget2D> SecondaryRenderTarget;
 
 };

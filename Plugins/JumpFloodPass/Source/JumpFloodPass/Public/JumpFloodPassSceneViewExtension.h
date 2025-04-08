@@ -9,9 +9,10 @@ class FJumpFloodPassSceneViewExtension final : public FSceneViewExtensionBase
 
 public:
 
-	FJumpFloodPassSceneViewExtension(const FAutoRegister &AutoRegister, UTextureRenderTarget2D* RenderTarget)
+	FJumpFloodPassSceneViewExtension(const FAutoRegister &AutoRegister, UTextureRenderTarget2D* PrimaryRenderTarget, UTextureRenderTarget2D* SecondaryRenderTarget)
 		: FSceneViewExtensionBase(AutoRegister)
-		, RenderTarget(RenderTarget)
+		, PrimaryRenderTarget(PrimaryRenderTarget)
+		, SecondaryRenderTarget(SecondaryRenderTarget)
 	{
 	}
 
@@ -28,23 +29,28 @@ protected:
 
 private:
 
-	void CreatePooledRenderTarget_RenderThread();
+	void CreatePooledRenderTargets_RenderThread();
 
 	void AddFloodPass_RenderThread(
 		FRDGBuilder& GraphBuilder,
 		const FGlobalShaderMap* GlobalShaderMap,
 		const FViewInfo& ViewInfo,
 		const FIntRect& IntermediateViewport,
-		const FRDGTextureRef& ReadTexture,
-		const FRDGTextureRef& WriteTexture,
+		const FRDGTextureRef& PrimaryReadTexture,
+		const FRDGTextureRef& PrimaryWriteTexture,
+		const FRDGTextureRef& SecondaryReadTexture,
+		const FRDGTextureRef& SecondaryWriteTexture,
 		int32 FloodExponent,
 		float ExponentToUVScaler);
 
 private:
 
-	TObjectPtr<UTextureRenderTarget2D> RenderTarget;
-	TRefCountPtr<IPooledRenderTarget> PooledRenderTarget;
+	TObjectPtr<UTextureRenderTarget2D> PrimaryRenderTarget;
+	TObjectPtr<UTextureRenderTarget2D> SecondaryRenderTarget;
 
-	bool bShouldRecreatePooledRenderTarget = true;
+	TRefCountPtr<IPooledRenderTarget> PooledPrimaryRenderTarget;
+	TRefCountPtr<IPooledRenderTarget> PooledSecondaryRenderTarget;
+
+	bool bShouldRecreatePooledRenderTargets = true;
 
 };

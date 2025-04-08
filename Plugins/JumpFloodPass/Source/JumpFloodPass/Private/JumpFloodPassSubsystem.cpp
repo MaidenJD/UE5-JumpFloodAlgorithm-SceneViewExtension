@@ -24,17 +24,24 @@ void UJumpFloodPassSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
-	UTextureRenderTarget2D* RenderTarget = UJumpFloodPassSettings::GetRenderTarget().LoadSynchronous();
-	SceneViewExtension = FSceneViewExtensions::NewExtension<FJumpFloodPassSceneViewExtension>(RenderTarget);
+	UTextureRenderTarget2D* PrimaryRenderTarget = UJumpFloodPassSettings::GetPrimaryRenderTarget().LoadSynchronous();
+	UTextureRenderTarget2D* SecondaryRenderTarget = UJumpFloodPassSettings::GetSecondaryRenderTarget().LoadSynchronous();
+	SceneViewExtension = FSceneViewExtensions::NewExtension<FJumpFloodPassSceneViewExtension>(PrimaryRenderTarget, SecondaryRenderTarget);
 }
 
 void UJumpFloodPassSubsystem::Deinitialize()
 {
 	Super::Deinitialize();
 
-	UTextureRenderTarget2D* RenderTarget = UJumpFloodPassSettings::GetRenderTarget().Get();
-	if (RenderTarget)
+	UTextureRenderTarget2D* PrimaryRenderTarget = UJumpFloodPassSettings::GetPrimaryRenderTarget().LoadSynchronous();
+	if (PrimaryRenderTarget)
 	{
-		UKismetRenderingLibrary::ClearRenderTarget2D(this, RenderTarget, FLinearColor::Transparent);
+		UKismetRenderingLibrary::ClearRenderTarget2D(this, PrimaryRenderTarget, FLinearColor::Transparent);
+	}
+
+	UTextureRenderTarget2D* SecondaryRenderTarget = UJumpFloodPassSettings::GetSecondaryRenderTarget().LoadSynchronous();
+	if (SecondaryRenderTarget)
+	{
+		UKismetRenderingLibrary::ClearRenderTarget2D(this, SecondaryRenderTarget, FLinearColor::Transparent);
 	}
 }
